@@ -9,11 +9,11 @@ import torch
 import wandb
 from ray import tune
 from datasets import load_from_disk, DatasetDict
-from transformers import AutoTokenizer, AutoProcessor, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoProcessor, Qwen3VLForConditionalGeneration
 from peft import LoraConfig, get_peft_model
 from trl import SFTTrainer, SFTConfig
 from src.data.dataset_builder import load_traffic_dataset
-from src.data.processor_collate import TrafficDataCollator
+from src.data.processor_collate import TrafficDataCollator, TrafficDataProcessor
 
 
 # ============================================================
@@ -52,7 +52,7 @@ def train_fn(config, data_path, output_dir, base_model_id):
             "bnb_4bit_compute_dtype": torch.bfloat16,
         })
 
-    model = AutoModelForCausalLM.from_pretrained(
+    model = Qwen3VLForConditionalGeneration.from_pretrained(
         base_model_id,
         torch_dtype=torch.bfloat16,
         device_map="auto",
@@ -73,7 +73,10 @@ def train_fn(config, data_path, output_dir, base_model_id):
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
 
-    # Collator for multimodal (video frame embedding)
+    # Build processed datasets (extract frames, tokenize via processor) and collator
+    data_processor = TrafficDataProcessor(model_path=base_model_id, num_frames=8, frame_size=(448, 448))
+    train_dataset = train_dataset.map(data_processor, batched=False)
+    val_dataset = val_dataset.map(data_processor, batched=False)
     collator = TrafficDataCollator(processor)
 
     # TRL SFT config
@@ -94,20 +97,17 @@ def train_fn(config, data_path, output_dir, base_model_id):
         bf16=True,
         gradient_checkpointing=True,
         optim="paged_adamw_8bit" if config["use_4bit"] else "adamw_torch",
-        max_seq_length=1024,
+        max_length=1024,
     )
 
     # Trainer
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
-        peft_config=lora_config,
+        processing_class=processor,
         args=sft_config,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         data_collator=collator,
-        dataset_text_field=None,
-        packing=False,
     )
 
     trainer.train()
@@ -137,8 +137,11 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
 
+    # Resolve dataset path to an absolute path so Ray workers can find it
+    data_path_abs = os.path.abspath(args.data_path)
+
     # Prepare dataset (or load existing)
-    if not os.path.exists(args.data_path):
+    if not os.path.exists(data_path_abs):
         # Use absolute path for training data
         train_json_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "train", "train.json")
         if not os.path.exists(train_json_path):
@@ -146,9 +149,11 @@ def main():
         
         print(f"Loading training data from: {train_json_path}")
         dataset = load_traffic_dataset(train_json_path)
-        dataset.save_to_disk(args.data_path)
+        # Ensure parent directory exists then save to disk with absolute path
+        os.makedirs(os.path.dirname(data_path_abs), exist_ok=True)
+        dataset.save_to_disk(data_path_abs)
     else:
-        dataset = load_from_disk(args.data_path)
+        dataset = load_from_disk(data_path_abs)
 
     # Ray Tune config - Updated for LoRA without regret
     search_space = {
@@ -167,7 +172,8 @@ def main():
 
     tuner = tune.Tuner(
         tune.with_resources(
-            tune.with_parameters(train_fn, data_path=args.data_path, output_dir=args.output_dir, base_model_id=args.base_model_id),
+            # Pass absolute dataset path so Ray workers can load it reliably
+            tune.with_parameters(train_fn, data_path=data_path_abs, output_dir=args.output_dir, base_model_id=args.base_model_id),
             resources={"cpu": 8, "gpu": 1}
         ),
         param_space=search_space,
