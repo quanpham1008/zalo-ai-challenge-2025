@@ -1,7 +1,22 @@
 import json
 import os
+import sys
+from pathlib import Path
 import requests
 from tqdm import tqdm
+
+# Ensure project root on sys.path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.utils.constants import (
+    PROJECT_ROOT as PRJ_ROOT,
+    TRAIN_JSON,
+    PUBLIC_TEST_JSON,
+    VIDEOS_DIR,
+    TEST_VIDEOS_DIR,
+)
 
 # Configuration
 url_root = "https://dl-challenge.zalo.ai/2025/TrafficBuddyHZUTAXF/"
@@ -54,7 +69,22 @@ def download_video(url, save_path):
         return False
 
 
-def download_video_in_file(saved_dir, json_file):
+def _resolve_local_path(video_path: str) -> str:
+    """Map dataset-relative video path to project storage path.
+
+    - "train/videos/<name>" -> data/raw/videos/<name>
+    - "public_test/videos/<name>" -> data/public_test/videos/<name>
+    - otherwise -> data/raw/videos/<name>
+    """
+    video_path = str(video_path)
+    basename = os.path.basename(video_path)
+    if video_path.startswith("public_test/videos/"):
+        return str(TEST_VIDEOS_DIR / basename)
+    # default to train/raw bucket
+    return str(VIDEOS_DIR / basename)
+
+
+def download_video_in_file(json_file):
     # Load JSON file
     with open(json_file, 'r') as f:
         data = json.load(f)["data"]
@@ -71,8 +101,8 @@ def download_video_in_file(saved_dir, json_file):
         # Construct full URL
         full_url = url_root + video_path
 
-        # Construct local save path
-        local_path = os.path.join(saved_dir, video_path)
+        # Construct local save path (mapped to project layout)
+        local_path = _resolve_local_path(video_path)
 
         # Check if file already exists
         if os.path.exists(local_path):
@@ -94,6 +124,29 @@ def download_video_in_file(saved_dir, json_file):
 
 
 if __name__ == "__main__":
-    saved_dir = "."  # Change to your desired save directory
-    download_video_in_file(saved_dir=saved_dir, json_file="public_test/public_test.json")
-    download_video_in_file(saved_dir=saved_dir, json_file="train/train.json")
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Download videos for Traffic Buddy dataset")
+    parser.add_argument("--train_json", type=str, default=str(TRAIN_JSON))
+    parser.add_argument("--public_test_json", type=str, default=str(PUBLIC_TEST_JSON))
+    args = parser.parse_args()
+
+    print(f"Project root: {PRJ_ROOT}")
+    print(f"Train JSON: {args.train_json}")
+    print(f"Public Test JSON: {args.public_test_json}")
+    print(f"Train videos dir: {VIDEOS_DIR}")
+    print(f"Public test videos dir: {TEST_VIDEOS_DIR}")
+
+    # Ensure dirs exist
+    os.makedirs(str(VIDEOS_DIR), exist_ok=True)
+    os.makedirs(str(TEST_VIDEOS_DIR), exist_ok=True)
+
+    # Download
+    if os.path.exists(args.public_test_json):
+        download_video_in_file(json_file=args.public_test_json)
+    else:
+        print(f"Skip: public test JSON not found: {args.public_test_json}")
+    if os.path.exists(args.train_json):
+        download_video_in_file(json_file=args.train_json)
+    else:
+        print(f"Skip: train JSON not found: {args.train_json}")
