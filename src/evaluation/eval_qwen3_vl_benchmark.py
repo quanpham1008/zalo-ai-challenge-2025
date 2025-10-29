@@ -14,7 +14,7 @@ from tqdm import tqdm
 from decord import VideoReader, cpu
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
-from evaluation.prompt import SYSTEM_PROMPT
+from src.training.prompt import SYSTEM_PROMPT
 
 # ========================
 # Config
@@ -35,8 +35,10 @@ TEMPERATURE = 0.0
 # ========================
 # Import the unified sample_frames function
 import sys
-import os
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from pathlib import Path
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 from src.data.video_sampler import sample_frames as unified_sample_frames
 
 def sample_frames(video_path: str, num_frames: int = 6, size=(448, 448)) -> Tuple[List[Image.Image], List[int]]:

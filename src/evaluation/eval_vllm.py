@@ -23,7 +23,7 @@ from tqdm import tqdm
 from transformers import AutoProcessor
 from vllm import LLM, SamplingParams
 from qwen_vl_utils import process_vision_info
-from evaluation.prompt import SYSTEM_PROMPT
+from src.training.prompt import SYSTEM_PROMPT
 
 # Mitigate CUDA memory fragmentation during vLLM init
 os.environ["VLLM_TORCH_COMPILE"] = "0"

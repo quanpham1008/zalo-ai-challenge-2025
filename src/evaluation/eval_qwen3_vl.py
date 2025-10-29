@@ -14,7 +14,7 @@ from tqdm import tqdm
 from decord import VideoReader, cpu
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
-from evaluation.prompt import SYSTEM_PROMPT
+from src.training.prompt import SYSTEM_PROMPT
 # ========================
 # Config
 # ========================
